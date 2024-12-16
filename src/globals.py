@@ -1,0 +1,3 @@
+clients = {}
+configs = {}
+objects = {}
