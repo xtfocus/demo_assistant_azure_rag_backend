@@ -119,3 +119,27 @@ class DuplicateChecker(BaseAzureContainerClient):
     @staticmethod
     def create_hash(byte_data: bytes) -> str:
         return hashlib.sha256(byte_data).hexdigest()
+
+    def remove_file_name(self, file_name: str) -> bool:
+        """
+        Remove a file name from the known names.
+
+        Args:
+            file_hash: The hash to remove
+
+        Returns:
+            bool: True if hash was found and removed, False otherwise
+        """
+
+        try:
+            if file_name in self.known_dict["known_file_names"]:
+                self.known_dict["known_file_names"].remove(file_name)
+                self.save()  # Save changes to blob storage
+                logger.info(f"Successfully removed file_name {file_name} from cache")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error removing file_name {file_name}: {e}")
+            return False

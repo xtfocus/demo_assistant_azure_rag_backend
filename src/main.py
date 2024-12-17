@@ -75,12 +75,12 @@ async def process_uploaded_files(
         try:
             # Read file content asynchronously
             file_content = await file.read()
-            file_hash = (
-                user_name
-                + "_"
-                + str(objects["duplicate-checker"].create_hash(file_content))
-            )  # marking file hash with user name
-            if not objects["duplicate-checker"].duplicate_by_hash(file_hash):
+            file_marked_name = (
+                user_name + "_" + file.filename
+            )  # marking file name  with user name, to be stored in cache
+            if not objects["duplicate-checker"].duplicate_by_file_name(
+                file_marked_name
+            ):
                 my_file = MyFile(
                     file_name=file.filename,
                     file_content=file_content,
@@ -90,10 +90,11 @@ async def process_uploaded_files(
                 # Process the file using the pipeline
                 result: ProcessingResult = await pipeline.process_file(my_file)
                 if not (result.errors):
-                    objects["duplicate-checker"].update(file_hash=file_hash)
+                    objects["duplicate-checker"].update(file_name=file_marked_name)
 
                 return {"file_name": file.filename, "result": result}
             else:
+                logger.warning(f"File {file_marked_name} already processed. Skipping")
                 raise ValueError(f"{file.filename} already processed. Skipping...")
 
         except Exception as e:
