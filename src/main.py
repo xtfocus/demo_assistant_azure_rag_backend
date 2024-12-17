@@ -219,15 +219,9 @@ async def remove_file_endpoint(
     """
     Remove all documents associated with a file from multiple Azure Search clients
     and delete associated image files if present.
-
-    Args:
-        file_name: Name of the file whose documents should be removed
-
-    Returns:
-        Result of the removal operation from all search clients and blob storage
     """
-
     title = os.path.splitext(file_name)[0]
+    marked_file_name = f"{user_name}_{file_name}"  # Create marked file name
 
     try:
         result = await process_deletion_across_indices(
@@ -242,6 +236,11 @@ async def remove_file_endpoint(
             filter_expression=f"title eq '{title}'",
             image_container_client=clients["image_container_client"],
         )
+
+        # Remove the marked file name from cache
+        duplicate_checker = objects["duplicate-checker"]
+        if duplicate_checker.remove_file_name(marked_file_name):
+            logger.info(f"Removed marked file name {marked_file_name} from cache")
 
         return {"file_name": file_name, **result}
 
