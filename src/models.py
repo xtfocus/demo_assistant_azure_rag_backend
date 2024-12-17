@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from loguru import logger
 from pydantic import BaseModel, Field
+from pydantic_core.core_schema import datetime_schema
 
 
 class CustomSkillException(Exception):
@@ -40,6 +41,8 @@ class FileMetadata(BaseModel):
 
     file_hash: str
     title: str
+    uploader: str
+    upload_time: datetime = Field(default_factory=datetime.now)
     created_at: datetime = Field(default_factory=datetime.now)
     additional_metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -55,6 +58,8 @@ class AzureSearchDoc(BaseModel):
     metadata: str = Field(description="JSON serialized metadata")
     parent_id: str = Field(description="ID of the parent document")
     title: str = Field(description="Title of the document")
+    uploader: str = Field(description="Uploader")
+    upload_time: datetime = Field(description="Upload time")
 
     @classmethod
     def from_chunk(
@@ -73,4 +78,6 @@ class AzureSearchDoc(BaseModel):
             metadata=json.dumps({"page_range": chunk.page_range.dict()}),
             parent_id=file_metadata.file_hash,
             title=file_metadata.title,
+            upload=file_metadata.uploader,
+            upload_time=file_metadata.upload_time,
         )

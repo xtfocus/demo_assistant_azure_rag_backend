@@ -1,8 +1,9 @@
 import asyncio
+from datetime import datetime
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.azure_container_client import AzureContainerClient
 from src.file_summarizer import FileSummarizer
@@ -18,6 +19,8 @@ from src.vector_stores import MyAzureSearch
 class MyFile(BaseModel):
     file_name: str
     file_content: bytes
+    uploader: str = "default"
+    upload_time: datetime = Field(default_factory=datetime.now)
 
 
 class ProcessingResult(NamedTuple):
@@ -187,6 +190,9 @@ class Pipeline:
                 file_metadata = create_file_metadata_from_bytes(
                     file_bytes=file.file_content, file_name=file.file_name
                 )
+                file_metadata["uploader"] = file.uploader
+                file_metadata["upload_time"] = file.upload_time.isoformat()
+
                 num_pages = len(doc)
                 texts, images = extract_texts_and_images(doc, report=True)
                 logger.info("Extracted raw texts and images")
@@ -246,13 +252,14 @@ class Pipeline:
                 except Exception as e:
                     logger.error(f"Image processing failed: {str(e)}")
                     errors.append(f"Image processing failed: {str(e)}")
-
+                    raise
             # Wait for all remaining tasks to complete
             try:
                 await asyncio.gather(*tasks.values())
             except Exception as e:
                 logger.error(f"Task completion error: {str(e)}")
                 errors.append(f"Task completion error: {str(e)}")
+                raise
 
             logger.info(f"Processed file {file_name}")
 

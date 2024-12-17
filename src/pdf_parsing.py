@@ -147,10 +147,13 @@ def process_regular_page(
     ]
 
     if not text:
-        logger.info(
-            f"Page {page_no} contains no text elements and will be treated as an image"
-        )
-        return process_page_as_an_image(page, page_no, stats)
+        if images_base64 or page.get_drawings():
+            logger.info(
+                f"Page {page_no} contains no text elements and will be treated as an image"
+            )
+            return process_page_as_an_image(page, page_no, stats)
+        else:
+            return [], []
 
     # Process text and images
     texts = [FileText(page_no=page_no, text=text)]

@@ -139,6 +139,8 @@ class MyAzureSearch:
                     "metadata": json.dumps(metadata["metadata"]),
                     "parent_id": metadata["parent_id"],
                     "title": metadata["title"],
+                    "uploader": metadata["uploader"],
+                    "upload_time": metadata["upload_time"],
                 }
                 documents.append(doc)
 
@@ -163,6 +165,8 @@ class MyAzureSearch:
                 "metadata": json.dumps({"page_range": chunk.page_range.dict()}),
                 "title": file_metadata["title"],
                 "parent_id": file_metadata["file_hash"],
+                "uploader": file_metadata["uploader"],
+                "upload_time": file_metadata.get("upload_time"),
             }
             for chunk in chunks
         ]

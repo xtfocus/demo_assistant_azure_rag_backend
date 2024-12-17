@@ -11,7 +11,7 @@ from loguru import logger
 
 from src import task_counter
 from src.get_pipeline import get_pipeline
-from src.pipeline import MyFile
+from src.pipeline import MyFile, ProcessingResult
 from src.task_counter import TaskCounter
 
 from .globals import clients, configs, objects
@@ -73,63 +73,56 @@ async def process_uploaded_files(
     prefix = f"{user_name}_{session_id}"
 
     pipeline = objects["pipeline"]
-
     objects["duplicate-checker"]._ensure_container_exists()
 
-    # Read all file contents before starting background task
-    files_data = []
-    for file in files:
+    @run_with_task_counter
+    async def process_single_file(file: UploadFile):
         try:
-            content = await file.read()
-            files_data.append({"filename": file.filename, "content": content})
+            # Read file content asynchronously
+            file_content = await file.read()
+            file_hash = objects["duplicate-checker"].create_hash(file_content)
+            if not objects["duplicate-checker"].duplicate_by_hash(file_hash):
+                my_file = MyFile(
+                    file_name=file.filename,
+                    file_content=file_content,
+                    uploader=user_name,
+                )
+
+                # Process the file using the pipeline
+                result: ProcessingResult = await pipeline.process_file(my_file)
+                if not (result.errors):
+                    objects["duplicate-checker"].update(file_hash=file_hash)
+
+                return {"file_name": file.filename, "result": result}
+            else:
+                raise ValueError(f"{file.filename} already processed. Skipping...")
+
         except Exception as e:
+            # Raise HTTPException for any errors
             raise HTTPException(
                 status_code=500,
-                detail=f"Error reading file '{file.filename}': {str(e)}",
+                detail=f"Error processing file '{file.filename}': {str(e)}",
             )
 
-    @run_with_task_counter
-    async def process_files(files_data: List[dict]):
-        for file_data in files_data:
-            try:
+    # Create tasks for processing each file
+    tasks = [process_single_file(file) for file in files]
 
-                my_file = MyFile(
-                    file_name=f"{prefix}_{file_data['filename']}",
-                    file_content=file_data["content"],
-                )
+    # Gather results for all tasks concurrently
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                if not objects["duplicate-checker"].duplicate_by_hash(
-                    my_file.file_content
-                ):
-                    # Process the file using the pipeline
-                    result = await pipeline.process_file(my_file)
+    # Handle results and exceptions
+    final_results = []
+    for index, result in enumerate(results):
+        if isinstance(result, Exception):
+            # Log or return the error for this file
+            final_results.append(
+                {"file_name": files[index].filename, "error": str(result)}
+            )
+        else:
+            final_results.append(result)
 
-                    # update into known hashes
-                    objects["duplicate-checker"].update(
-                        file_hash=objects["duplicate-checker"].create_hash(
-                            file_data["content"]
-                        )
-                    )
-                    return {"file_name": file_data["filename"], "result": result}
-                else:
-
-                    logger.info(f"{my_file.file_name} already processed. Skipping...")
-                    return {
-                        "file_name": my_file.file_name,
-                        "result": "Skipped because already processed",
-                    }
-
-            except Exception as e:
-                # Raise HTTPException for any errors
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Error processing file '{file_data['filename']}': {str(e)}",
-                )
-
-    background_tasks.add_task(process_files, files_data)
-    return {
-        "message": f"Indexing files {[file.filename for file in files]} for user {user_name} session {session_id}"
-    }
+    objects["duplicate-checker"].save()
+    return final_results
 
 
 async def search_client_filter_file(file_name: str, search_client) -> Iterable:
