@@ -1,17 +1,15 @@
 import asyncio
 import os
+import uuid
 from collections.abc import Iterable
-from typing import Any, Callable, List
+from typing import List
 
-from azure.search.documents import SearchClient
-from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
-                     UploadFile)
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from loguru import logger
 
-from src import task_counter
+from src import pipeline
 from src.delete_helpers import process_deletion_across_indices
 from src.pipeline import MyFile, ProcessingResult
-from src.task_counter import TaskCounter
 
 from .globals import clients, objects
 
@@ -20,109 +18,106 @@ router = APIRouter()
 # Shared results store (use a more robust storage mechanism in production)
 background_results = {}
 
-task_counter = TaskCounter()
-
-
-async def ensure_no_active_tasks():
-    """
-    Dependency that checks if there are any active background tasks.
-    """
-
-    if task_counter.is_busy:
-        raise HTTPException(
-            status_code=409,
-            detail=f"There are {task_counter.active_tasks} background tasks still running. Please try again later.",
-        )
-    yield
-
-
-def run_with_task_counter(func: Callable[..., Any]) -> Callable[..., Any]:
-    """
-    Decorator to wrap a function with task counter increment and decrement logic.
-    """
-
-    async def wrapper(*args, **kwargs):
-        task_counter.increment()
-        try:
-            return await func(*args, **kwargs)
-        finally:
-            task_counter.decrement()
-
-    return wrapper
-
 
 @router.post("/api/exec/uploads/")
 async def process_uploaded_files(
     user_name: str,
     files: List[UploadFile] = File(...),
-    background_tasks: BackgroundTasks = None,
-    _: None = Depends(ensure_no_active_tasks),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """
-    Process multiple uploaded files asynchronously.
+    Process multiple uploaded files asynchronously in the background.
     Args:
-        files: List of uploaded files from the client.
+        files: List of uploaded files from the client
         user_name: user_name
+        background_tasks: FastAPI BackgroundTasks object
     Returns:
-        List of results for each processed file.
+        Dictionary with task_id for tracking the background processing
     """
+    task_id = str(uuid.uuid4())
+    background_results[task_id] = {"status": "processing", "results": []}
 
-    pipeline = objects["pipeline"]
-    objects["duplicate-checker"]._ensure_container_exists()
-
-    @run_with_task_counter
-    async def process_single_file(file: UploadFile):
+    # Read all file contents before starting background task
+    file_data = []
+    for file in files:
         try:
-            # Read file content asynchronously
-            file_content = await file.read()
-            file_marked_name = (
-                user_name + "_" + file.filename
-            )  # marking file name  with user name, to be stored in cache
-            if not objects["duplicate-checker"].duplicate_by_file_name(
-                file_marked_name
-            ):
-                my_file = MyFile(
-                    file_name=file.filename,
-                    file_content=file_content,
-                    uploader=user_name,
-                )
-
-                # Process the file using the pipeline
-                result: ProcessingResult = await pipeline.process_file(my_file)
-                if not (result.errors):
-                    objects["duplicate-checker"].update(file_name=file_marked_name)
-
-                return {"file_name": file.filename, "result": result}
-            else:
-                logger.warning(f"File {file_marked_name} already processed. Skipping")
-                raise ValueError(f"{file.filename} already processed. Skipping...")
-
+            content = await file.read()
+            file_data.append({"filename": file.filename, "content": content})
         except Exception as e:
-            # Raise HTTPException for any errors
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error processing file '{file.filename}': {str(e)}",
+            logger.error(f"Error reading file '{file.filename}': {str(e)}")
+            background_results[task_id]["results"].append(
+                {"file_name": file.filename, "error": f"Error reading file: {str(e)}"}
             )
+            continue
 
-    # Create tasks for processing each file
-    tasks = [process_single_file(file) for file in files]
+    async def process_files_in_background():
+        pipeline = objects["pipeline"]
+        objects["duplicate-checker"]._ensure_container_exists()
+        results = []
 
-    # Gather results for all tasks concurrently
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+        for file_info in file_data:
+            try:
+                file_marked_name = f"{user_name}_{file_info['filename']}"
 
-    # Handle results and exceptions
-    final_results = []
-    for index, result in enumerate(results):
-        if isinstance(result, Exception):
-            # Log or return the error for this file
-            final_results.append(
-                {"file_name": files[index].filename, "error": str(result)}
-            )
-        else:
-            final_results.append(result)
+                if not objects["duplicate-checker"].duplicate_by_file_name(
+                    file_marked_name
+                ):
+                    my_file = MyFile(
+                        file_name=file_info["filename"],
+                        file_content=file_info["content"],
+                        uploader=user_name,
+                    )
 
-    objects["duplicate-checker"].save()
-    return final_results
+                    result: ProcessingResult = await pipeline.process_file(my_file)
+                    if not result.errors:
+                        objects["duplicate-checker"].update(file_name=file_marked_name)
+
+                    results.append(
+                        {"file_name": file_info["filename"], "result": result}
+                    )
+                else:
+                    logger.warning(
+                        f"File {file_marked_name} already processed. Skipping"
+                    )
+                    results.append(
+                        {
+                            "file_name": file_info["filename"],
+                            "error": "File already processed",
+                        }
+                    )
+
+            except Exception as e:
+                logger.error(
+                    f"Error processing file '{file_info['filename']}': {str(e)}"
+                )
+                results.append({"file_name": file_info["filename"], "error": str(e)})
+
+        objects["duplicate-checker"].save()
+        background_results[task_id]["status"] = "completed"
+        background_results[task_id]["results"] = results
+
+    background_tasks.add_task(process_files_in_background)
+
+    return {
+        "task_id": task_id,
+        "message": "Files are being processed in the background",
+        "status_endpoint": f"/api/exec/upload-status/{task_id}",
+    }
+
+
+@router.get("/api/exec/upload-status/{task_id}")
+async def get_upload_status(task_id: str):
+    """
+    Get the status and results of a background file processing task.
+    Args:
+        task_id: UUID of the background task
+    Returns:
+        Dictionary containing status and results of the processing task
+    """
+    if task_id not in background_results:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return background_results[task_id]
 
 
 async def search_client_filter_file(file_name: str, search_client) -> Iterable:
@@ -214,7 +209,6 @@ async def remove_file(file_name: str, search_client) -> dict:
 async def remove_file_endpoint(
     user_name: str,
     file_name: str,
-    _: None = Depends(ensure_no_active_tasks),
 ):
     """
     Remove all documents associated with a file from multiple Azure Search clients
@@ -253,7 +247,6 @@ async def remove_file_endpoint(
 @router.delete("/api/exec/remove_user_data/")
 async def remove_user_data_endpoint(
     user_name: str,
-    _: None = Depends(ensure_no_active_tasks),
 ):
     """
 
