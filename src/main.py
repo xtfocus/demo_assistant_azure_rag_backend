@@ -272,14 +272,27 @@ async def remove_user_data_endpoint(
     """
 
     results = []
-
     total_removed = 0
-
     deleted_blobs = []
+    duplicate_checker = objects["duplicate-checker"]
+
+    # First identify all files to be removed
+    files_to_remove = [
+        file_name
+        for file_name in duplicate_checker.known_dict["known_file_names"]
+        if file_name.startswith(f"{user_name}_")
+    ]
 
     try:
+        # Remove all marked file names for this user from cache
+        removed_file_names = []
 
-        # First handle the image files for the image search client
+        for file_name in files_to_remove:
+            if file_name.startswith(f"{user_name}_"):
+                if duplicate_checker.remove_file_name(file_name):
+                    removed_file_names.append(
+                        file_name
+                    )  # First handle the image files for the image search client
 
         image_container_client = clients["image_container_client"]
 
@@ -392,6 +405,10 @@ async def remove_user_data_endpoint(
             "deleted_image_files": {
                 "count": len(deleted_blobs),
                 "files": deleted_blobs,
+            },
+            "removed_cache_entries": {
+                "count": len(removed_file_names),
+                "files": removed_file_names,
             },
         }
 
