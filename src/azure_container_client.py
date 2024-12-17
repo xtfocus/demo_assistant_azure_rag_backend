@@ -5,7 +5,7 @@ Desc: handling I/O tasks with Blob Storage for a specfic container
 """
 
 import base64
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Iterable, List, Optional
 
 from azure.storage.blob import BlobClient, BlobServiceClient, ContainerClient

@@ -84,20 +84,6 @@ def get_pipeline(
                 Submit Your Work: Provide the transcribed text in a clear and organized format.
                 By completing this task, you will help capture the detailed content and context of the document.
         """,
-        # """Transform the content of the uploaded image into a detailed and meaningful text for Q&A purpose.
-        # You must follow these rules:
-        # - Detect if the image carry no information of interest:
-        #     + if the image is a simple shape (e.g.,. line, boxes,), simply return 'a shape' then terminate.
-        #     + if the image is a logo, simply return 'a logo' then terminate.
-        #     + No further processing needed. Simply terminate
-        # - Otherwise, transform the image to text
-        #     + Output in Japanese, Markdown format
-        #     + Use a clear, natural tone.
-        #     + Tables (if exists) must be convert to meaningful paragraphs
-        #     + Preserve all numeric values and quantities in the final output. Explain their meaning.
-        #     + In the end, generate a list of 10 QA pairs with explicit scoping.
-        #     + Be specific. Summarization is forbidden because it results in information loss.
-        # - Refrain from providing your own additional commentaries or thought process.""",
     )
 
     my_embedding_function = MyAzureOpenAIEmbeddings(

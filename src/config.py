@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 
 @dataclass
-class ModelConfig:
+class GlobalAppConfig:
     temperature: float = 0.0
     top_p: float = 0.95
     max_tokens: int = 4096
@@ -40,7 +40,8 @@ class ModelConfig:
         "VECTOR_SEARCH_PROFILE_NAME", "myHnswProfile"
     )
 
-    TEXT_INDEX_NAME = os.getenv("TEXT_INDEX_NAME", "my-text-index")
-    IMAGE_INDEX_NAME = os.getenv("IMAGE_INDEX_NAME", "my-image-index")
-    SUMMARY_INDEX_NAME = os.getenv("SUMMARY_INDEX_NAME", "my-summary-index")
+    TEXT_INDEX_NAME = os.getenv("TEXT_INDEX_NAME", "mc-text-index")
+    IMAGE_INDEX_NAME = os.getenv("IMAGE_INDEX_NAME", "mc-image-index")
+    SUMMARY_INDEX_NAME = os.getenv("SUMMARY_INDEX_NAME", "mc-summary-index")
+
     IMAGE_CONTAINER_NAME = os.getenv("IMAGE_CONTAINER_NAME", "my-image-container")

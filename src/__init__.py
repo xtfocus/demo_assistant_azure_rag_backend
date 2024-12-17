@@ -3,13 +3,16 @@ import os
 
 import fastapi
 from azure.core.credentials import AzureKeyCredential
+from azure.identity import DefaultAzureCredential
 from azure.search.documents import SearchClient
+from azure.search.documents.indexes import SearchIndexClient
 from azure.storage.blob import BlobServiceClient
 from environs import Env
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncAzureOpenAI
 
 from src.azure_container_client import AzureContainerClient
+from src.check_duplicates import DuplicateChecker
 from src.get_pipeline import get_pipeline
 
 from .globals import clients, configs, objects
@@ -18,13 +21,20 @@ from .globals import clients, configs, objects
 @contextlib.asynccontextmanager
 async def lifespan(app: fastapi.FastAPI):
 
-    from .config import ModelConfig
+    from .config import GlobalAppConfig
 
-    configs["app_config"] = ModelConfig()
+    configs["app_config"] = GlobalAppConfig()
 
     config = configs["app_config"]
 
-    credential = AzureKeyCredential(config.AZURE_SEARCH_ADMIN_KEY)
+    credential = (
+        AzureKeyCredential(config.AZURE_SEARCH_ADMIN_KEY)
+        if len(config.AZURE_SEARCH_ADMIN_KEY) > 0
+        else DefaultAzureCredential()
+    )
+    clients["search-index-client"] = SearchIndexClient(
+        endpoint=config.AZURE_SEARCH_SERVICE_ENDPOINT, credential=credential
+    )
 
     clients["chat-completion-model"] = AsyncAzureOpenAI(
         api_key=config.AZURE_OPENAI_API_KEY,
@@ -60,6 +70,12 @@ async def lifespan(app: fastapi.FastAPI):
         credential=credential,
     )
 
+    # DUPLICATE CHEKER to avoid handling a processed file
+    objects["duplicate-checker"] = DuplicateChecker(
+        client=clients["blob_service_client"],
+        container_name="known-files-container",
+    )
+
     # PIPELINE object
     objects["pipeline"] = get_pipeline(
         configs["app_config"],
@@ -73,6 +89,8 @@ async def lifespan(app: fastapi.FastAPI):
     await clients["chat-completion-model"].close()
     clients["text-azure-ai-search"].close()
     clients["image-azure-ai-search"].close()
+    clients["summary-azure-ai-search"].close()
+    clients["search-index-client"].close()
 
 
 def create_app():

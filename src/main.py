@@ -3,17 +3,18 @@ import os
 from collections.abc import Iterable
 from typing import Any, Callable, List
 
-from fastapi import (APIRouter, BackgroundTasks, Depends, HTTPException,
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents import SearchClient
+from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      UploadFile)
 from loguru import logger
 
 from src import task_counter
-from src.azure_container_client import AzureContainerClient
-from src.file_utils import pdf_blob_to_pymupdf_doc
+from src.get_pipeline import get_pipeline
 from src.pipeline import MyFile
 from src.task_counter import TaskCounter
 
-from .globals import clients, objects
+from .globals import clients, configs, objects
 
 router = APIRouter()
 
@@ -52,65 +53,83 @@ def run_with_task_counter(func: Callable[..., Any]) -> Callable[..., Any]:
 
 
 @router.post("/api/exec/uploads/")
-async def process_files(
-    files: List[UploadFile], _: None = Depends(ensure_no_active_tasks),
+async def process_uploaded_files(
     user_name: str,
-    session_id: str
+    session_id: str,
+    files: List[UploadFile] = File(...),
+    background_tasks: BackgroundTasks = None,
+    _: None = Depends(ensure_no_active_tasks),
 ):
     """
     Process multiple uploaded files asynchronously.
     Upload to a single index having uuid being {user_name}_{session_id}
-
     Args:
         files: List of uploaded files from the client.
         user_name: user_name
         session_id: unique identifier of a session
-
     Returns:
         List of results for each processed file.
     """
+    prefix = f"{user_name}_{session_id}"
 
     pipeline = objects["pipeline"]
 
+    objects["duplicate-checker"]._ensure_container_exists()
 
-    @run_with_task_counter
-    async def process_single_file(file: UploadFile):
+    # Read all file contents before starting background task
+    files_data = []
+    for file in files:
         try:
-            # Read file content asynchronously
-            file_content = await file.read()
-
-            my_file = MyFile(file_name=file.filename, file_content=file_content)
-
-            # Process the file using the pipeline
-            result = await pipeline.process_file(my_file)
-
-            return {"file_name": file.filename, "result": result}
-
+            content = await file.read()
+            files_data.append({"filename": file.filename, "content": content})
         except Exception as e:
-            # Raise HTTPException for any errors
             raise HTTPException(
                 status_code=500,
-                detail=f"Error processing file '{file.filename}': {str(e)}",
+                detail=f"Error reading file '{file.filename}': {str(e)}",
             )
 
-    # Create tasks for processing each file
-    tasks = [process_single_file(file) for file in files]
+    @run_with_task_counter
+    async def process_files(files_data: List[dict]):
+        for file_data in files_data:
+            try:
 
-    # Gather results for all tasks concurrently
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+                my_file = MyFile(
+                    file_name=f"{prefix}_{file_data['filename']}",
+                    file_content=file_data["content"],
+                )
 
-    # Handle results and exceptions
-    final_results = []
-    for index, result in enumerate(results):
-        if isinstance(result, Exception):
-            # Log or return the error for this file
-            final_results.append(
-                {"file_name": files[index].filename, "error": str(result)}
-            )
-        else:
-            final_results.append(result)
+                if not objects["duplicate-checker"].duplicate_by_hash(
+                    my_file.file_content
+                ):
+                    # Process the file using the pipeline
+                    result = await pipeline.process_file(my_file)
 
-    return final_results
+                    # update into known hashes
+                    objects["duplicate-checker"].update(
+                        file_hash=objects["duplicate-checker"].create_hash(
+                            file_data["content"]
+                        )
+                    )
+                    return {"file_name": file_data["filename"], "result": result}
+                else:
+
+                    logger.info(f"{my_file.file_name} already processed. Skipping...")
+                    return {
+                        "file_name": my_file.file_name,
+                        "result": "Skipped because already processed",
+                    }
+
+            except Exception as e:
+                # Raise HTTPException for any errors
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error processing file '{file_data['filename']}': {str(e)}",
+                )
+
+    background_tasks.add_task(process_files, files_data)
+    return {
+        "message": f"Indexing files {[file.filename for file in files]} for user {user_name} session {session_id}"
+    }
 
 
 async def search_client_filter_file(file_name: str, search_client) -> Iterable:
@@ -128,32 +147,23 @@ async def search_client_filter_file(file_name: str, search_client) -> Iterable:
     return list(search_results)
 
 
-async def remove_file(
-    file_name: str, search_client, use_parent_id: bool = False
-) -> dict:
+async def remove_file(file_name: str, search_client) -> dict:
     """
     Remove all documents from Azure Search where either:
     - title exactly matches the file name (without extension), or
-    - parent_id exactly matches the file name (with extension)
 
     Args:
         file_name: Name of the file to remove (with extension)
         search_client: Azure Search client instance
-        use_parent_id: If True, filter by parent_id instead of title
 
     Returns:
         dict: Result of the removal operation including number of documents removed
     """
     try:
-        if use_parent_id:
-            # Use the full file name as parent_id
-            filter_expr = f"parent_id eq '{file_name}'"
-            search_term = file_name
-        else:
-            # Get file name without extension for title matching
-            title = os.path.splitext(file_name)[0]
-            filter_expr = f"title eq '{title}'"
-            search_term = title
+        # Get file name without extension for title matching
+        title = os.path.splitext(file_name)[0]
+        filter_expr = f"title eq '{title}'"
+        search_term = title
 
         # Search for documents with exact match using OData filter
         search_results = await asyncio.to_thread(
@@ -169,7 +179,7 @@ async def remove_file(
             chunk_ids.append(result["chunk_id"])
 
         if not chunk_ids:
-            field_type = "parent_id" if use_parent_id else "title"
+            field_type = "title"
             logger.warning(f"No documents found with {field_type} '{search_term}'")
             return {
                 "file_name": file_name,
@@ -190,7 +200,7 @@ async def remove_file(
                 ],
             )
 
-        field_type = "parent_id" if use_parent_id else "title"
+        field_type = "title"
         logger.info(
             f"Successfully removed {len(chunk_ids)} documents for file '{file_name}' using {field_type} filter"
         )
@@ -209,8 +219,9 @@ async def remove_file(
 
 @router.delete("/api/exec/remove_file/")
 async def remove_file_endpoint(
+    user_name: str,
+    session_id: str,
     file_name: str,
-    use_parent_id: bool = False,
     _: None = Depends(ensure_no_active_tasks),
 ):
     """
@@ -219,35 +230,28 @@ async def remove_file_endpoint(
 
     Args:
         file_name: Name of the file whose documents should be removed
-        use_parent_id: If True, filter by parent_id instead of title
 
     Returns:
         Result of the removal operation from all search clients and blob storage
     """
-    search_clients = [
-        clients["text-azure-ai-search"],
-        clients["image-azure-ai-search"],
-        clients["summary-azure-ai-search"],
-    ]
+
+    prefix = f"{user_name}_{session_id}"
+
+    file_name = f"{prefix}_{file_name}"
 
     results = []
     total_removed = 0
     deleted_blobs = []
 
     # First handle the image files for the image search client
-    image_search_client = clients["image-azure-ai-search"]
     image_container_client = clients["image_container_client"]
 
     try:
         # Get all chunk_ids from the image search results before any deletion
         search_results = await asyncio.to_thread(
-            image_search_client.search,
+            clients["image-azure-ai-search"].search,
             search_text="*",
-            filter=(
-                f"parent_id eq '{file_name}'"
-                if use_parent_id
-                else f"title eq '{os.path.splitext(file_name)[0]}'"
-            ),
+            filter=f"title eq '{os.path.splitext(file_name)[0]}'",
             select=["chunk_id"],
         )
 
@@ -277,9 +281,16 @@ async def remove_file_endpoint(
         }
 
     # Then process each search client
-    for client in search_clients:
+    for client in [
+        clients["text-azure-ai-search"],
+        clients["image-azure-ai-search"],
+        clients["summary-azure-ai-search"],
+    ]:
         try:
-            result = await remove_file(file_name, client, use_parent_id)
+            result = await remove_file(
+                file_name,
+                client,
+            )
             results.append(result)
             total_removed += result["documents_removed"]
 
@@ -302,49 +313,3 @@ async def remove_file_endpoint(
         "client_results": results,
         "deleted_image_files": {"count": len(deleted_blobs), "files": deleted_blobs},
     }
-
-
-@router.get("/api/exec/get_file_entries/")
-async def run_retrieve_by_file_name(file_name: str):
-    tasks = {}
-    # Define clients
-    for client_name in [
-        "text-azure-ai-search",
-        "image-azure-ai-search",
-        "summary-azure-ai-search",
-    ]:
-
-        logger.debug(f"Starting task for client: {client_name}")
-
-        tasks[client_name] = asyncio.create_task(
-            search_client_filter_file(file_name, clients[client_name])
-        )
-
-    # return await tasks["summary-azure-ai-search"]
-    # Await all tasks and collect results
-    completed_results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-
-    # Create a result dictionary mapping client_name to task result
-    result = {
-        client_name: completed_results[idx]
-        for idx, client_name in enumerate(tasks.keys())
-    }
-
-    for i, v in result.items():
-        logger.info(f"Client {i}: Found {len(v)} results")
-
-    return result
-
-
-@router.get("/api/exec/get_file_metadata/")
-async def get_file_metadata(container_name: str, file_name: str):
-    # Define clients
-    blob_container_client = AzureContainerClient(
-        client=clients["blob_service_client"], container_name=container_name
-    )
-
-    # Download file content asynchronously
-    file_content = await asyncio.to_thread(
-        blob_container_client.download_file, file_name
-    )
-    return pdf_blob_to_pymupdf_doc(file_content).metadata

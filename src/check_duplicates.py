@@ -3,6 +3,7 @@ Implement duplicating rules.
 If a file is a duplicate, skip processing it
 """
 
+import hashlib
 import json
 from typing import Any, Dict, List
 
@@ -114,3 +115,7 @@ class DuplicateChecker(BaseAzureContainerClient):
 
     def duplicate_by_file_name(self, file_name: str):
         return file_name in self.known_dict["known_file_names"]
+
+    @staticmethod
+    def create_hash(byte_data: bytes) -> str:
+        return hashlib.sha256(byte_data).hexdigest()
