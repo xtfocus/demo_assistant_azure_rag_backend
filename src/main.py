@@ -3,18 +3,17 @@ import os
 from collections.abc import Iterable
 from typing import Any, Callable, List
 
-from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from fastapi import (APIRouter, BackgroundTasks, Depends, File, HTTPException,
                      UploadFile)
 from loguru import logger
 
 from src import task_counter
-from src.get_pipeline import get_pipeline
+from src.delete_helpers import process_deletion_across_indices
 from src.pipeline import MyFile, ProcessingResult
 from src.task_counter import TaskCounter
 
-from .globals import clients, configs, objects
+from .globals import clients, objects
 
 router = APIRouter()
 
@@ -55,22 +54,18 @@ def run_with_task_counter(func: Callable[..., Any]) -> Callable[..., Any]:
 @router.post("/api/exec/uploads/")
 async def process_uploaded_files(
     user_name: str,
-    session_id: str,
     files: List[UploadFile] = File(...),
     background_tasks: BackgroundTasks = None,
     _: None = Depends(ensure_no_active_tasks),
 ):
     """
     Process multiple uploaded files asynchronously.
-    Upload to a single index having uuid being {user_name}_{session_id}
     Args:
         files: List of uploaded files from the client.
         user_name: user_name
-        session_id: unique identifier of a session
     Returns:
         List of results for each processed file.
     """
-    prefix = f"{user_name}_{session_id}"
 
     pipeline = objects["pipeline"]
     objects["duplicate-checker"]._ensure_container_exists()
@@ -80,7 +75,11 @@ async def process_uploaded_files(
         try:
             # Read file content asynchronously
             file_content = await file.read()
-            file_hash = objects["duplicate-checker"].create_hash(file_content)
+            file_hash = (
+                user_name
+                + "_"
+                + str(objects["duplicate-checker"].create_hash(file_content))
+            )  # marking file hash with user name
             if not objects["duplicate-checker"].duplicate_by_hash(file_hash):
                 my_file = MyFile(
                     file_name=file.filename,
@@ -213,7 +212,6 @@ async def remove_file(file_name: str, search_client) -> dict:
 @router.delete("/api/exec/remove_file/")
 async def remove_file_endpoint(
     user_name: str,
-    session_id: str,
     file_name: str,
     _: None = Depends(ensure_no_active_tasks),
 ):
@@ -228,28 +226,75 @@ async def remove_file_endpoint(
         Result of the removal operation from all search clients and blob storage
     """
 
-    prefix = f"{user_name}_{session_id}"
-
-    file_name = f"{prefix}_{file_name}"
-
-    results = []
-    total_removed = 0
-    deleted_blobs = []
-
-    # First handle the image files for the image search client
-    image_container_client = clients["image_container_client"]
+    title = os.path.splitext(file_name)[0]
 
     try:
-        # Get all chunk_ids from the image search results before any deletion
+        result = await process_deletion_across_indices(
+            search_clients={
+                name: clients[name]
+                for name in [
+                    "text-azure-ai-search",
+                    "image-azure-ai-search",
+                    "summary-azure-ai-search",
+                ]
+            },
+            filter_expression=f"title eq '{title}'",
+            image_container_client=clients["image_container_client"],
+        )
+
+        return {"file_name": file_name, **result}
+
+    except Exception as e:
+        error_msg = f"Error removing file data for '{file_name}': {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
+@router.delete("/api/exec/remove_user_data/")
+async def remove_user_data_endpoint(
+    user_name: str,
+    _: None = Depends(ensure_no_active_tasks),
+):
+    """
+
+    Remove all documents and associated images belonging to a specific user.
+
+
+    Args:
+
+        user_name: Name of the user whose data should be removed
+
+
+    Returns:
+
+        Result of the removal operation from all search clients and blob storage
+
+    """
+
+    results = []
+
+    total_removed = 0
+
+    deleted_blobs = []
+
+    try:
+
+        # First handle the image files for the image search client
+
+        image_container_client = clients["image_container_client"]
+
+        # Search for all documents with matching uploader in image index
+
         search_results = await asyncio.to_thread(
             clients["image-azure-ai-search"].search,
             search_text="*",
-            filter=f"title eq '{os.path.splitext(file_name)[0]}'",
+            filter=f"uploader eq '{user_name}'",
             select=["chunk_id"],
         )
 
         # Delete all associated image files first
         chunk_ids = []
+
         for doc in search_results:
             chunk_ids.append(doc["chunk_id"])
             blob_name = f"{doc['chunk_id']}"  # Assuming blob name matches chunk_id
@@ -263,46 +308,94 @@ async def remove_file_endpoint(
             f"Deleted {len(deleted_blobs)} image files out of {len(chunk_ids)} found"
         )
 
-    except Exception as e:
-        error_msg = f"Error handling image files: {str(e)}"
-        logger.error(error_msg)
+        # Then process each search client to delete documents
+
+        for client in [
+            clients["text-azure-ai-search"],
+            clients["image-azure-ai-search"],
+            clients["summary-azure-ai-search"],
+        ]:
+
+            try:
+                # Search for documents with matching uploader
+                search_results = await asyncio.to_thread(
+                    client.search,
+                    search_text="*",
+                    filter=f"uploader eq '{user_name}'",
+                    select=["chunk_id"],
+                )
+
+                # Collect all chunk_ids
+                chunk_ids = [result["chunk_id"] for result in search_results]
+
+                if not chunk_ids:
+                    logger.warning(
+                        f"No documents found for user '{user_name}' in {client._index_name}"
+                    )
+
+                    results.append(
+                        {
+                            "index": client._index_name,
+                            "status": "no_documents_found",
+                            "documents_removed": 0,
+                        }
+                    )
+                    continue
+
+                # Delete documents in batches
+
+                batch_size = 1000  # Azure Search limitation
+
+                for i in range(0, len(chunk_ids), batch_size):
+                    batch = chunk_ids[i : i + batch_size]
+                    await asyncio.to_thread(
+                        client.delete_documents,
+                        documents=[
+                            {"@search.action": "delete", "chunk_id": chunk_id}
+                            for chunk_id in batch
+                        ],
+                    )
+
+                logger.info(
+                    f"Successfully removed {len(chunk_ids)} documents for user '{user_name}' from {client._index_name}"
+                )
+
+                results.append(
+                    {
+                        "index": client._index_name,
+                        "status": "success",
+                        "documents_removed": len(chunk_ids),
+                    }
+                )
+
+                total_removed += len(chunk_ids)
+
+            except Exception as e:
+                error_msg = (
+                    f"Error removing documents from {client._index_name}: {str(e)}"
+                )
+                logger.error(error_msg)
+                results.append(
+                    {
+                        "index": client._index_name,
+                        "status": "error",
+                        "error": str(e),
+                        "documents_removed": 0,
+                    }
+                )
+
         return {
-            "file_name": file_name,
-            "overall_status": "error",
-            "error": error_msg,
-            "stage": "image_deletion",
+            "user_name": user_name,
+            "overall_status": "completed",
+            "total_documents_removed": total_removed,
+            "index_results": results,
+            "deleted_image_files": {
+                "count": len(deleted_blobs),
+                "files": deleted_blobs,
+            },
         }
 
-    # Then process each search client
-    for client in [
-        clients["text-azure-ai-search"],
-        clients["image-azure-ai-search"],
-        clients["summary-azure-ai-search"],
-    ]:
-        try:
-            result = await remove_file(
-                file_name,
-                client,
-            )
-            results.append(result)
-            total_removed += result["documents_removed"]
-
-        except Exception as e:
-            logger.error(f"Error with client {client.index_name}: {str(e)}")
-            results.append(
-                {
-                    "client": client.index_name,
-                    "file_name": file_name,
-                    "status": "error",
-                    "error": str(e),
-                    "documents_removed": 0,
-                }
-            )
-
-    return {
-        "file_name": file_name,
-        "overall_status": "completed",
-        "total_documents_removed": total_removed,
-        "client_results": results,
-        "deleted_image_files": {"count": len(deleted_blobs), "files": deleted_blobs},
-    }
+    except Exception as e:
+        error_msg = f"Error removing user data for '{user_name}': {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
