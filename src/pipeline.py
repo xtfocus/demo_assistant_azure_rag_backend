@@ -1,9 +1,7 @@
 import asyncio
-from datetime import datetime
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from loguru import logger
-from pydantic import BaseModel, Field
 
 from src.azure_service_integration.azure_container_client import \
     AzureContainerClient
@@ -12,16 +10,9 @@ from src.file_processing.file_summarizer import FileSummarizer
 from src.file_processing.file_utils import (create_file_metadata_from_bytes,
                                             pdf_blob_to_pymupdf_doc)
 from src.file_processing.image_descriptor import ImageDescriptor
+from src.file_processing.models import BaseChunk, MyFile, PageRange
 from src.file_processing.pdf_parsing import FileImage, extract_texts_and_images
 from src.file_processing.splitters import SimplePageTextSplitter
-from src.models import BaseChunk, PageRange
-
-
-class MyFile(BaseModel):
-    file_name: str
-    file_content: bytes
-    uploader: str = "default"
-    upload_time: datetime = Field(default_factory=datetime.now)
 
 
 class ProcessingResult(NamedTuple):

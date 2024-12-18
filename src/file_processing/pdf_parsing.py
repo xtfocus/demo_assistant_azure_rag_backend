@@ -5,33 +5,14 @@ while maintaining page information
 
 import base64
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from fitz import Document, Matrix, Page
 from loguru import logger
-from pydantic import BaseModel
 
 from src.file_processing.file_utils import (get_images_as_base64,
                                             page_extract_images)
-
-
-class FileText(BaseModel):
-    """
-    Represents a page of text
-    """
-
-    page_no: int
-    text: Optional[str]
-
-
-class FileImage(BaseModel):
-    """
-    Represent an image
-    """
-
-    page_no: int
-    image_no: int
-    image_base64: str
+from src.file_processing.models import FileImage, FileText
 
 
 @dataclass

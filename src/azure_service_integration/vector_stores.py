@@ -11,7 +11,7 @@ from azure.search.documents.indexes.models import (SearchIndex, SemanticSearch,
 from loguru import logger
 from openai import AzureOpenAI
 
-from src.models import BaseChunk, FileMetadata
+from src.file_processing.models import BaseChunk, FileMetadata
 
 
 class MyAzureSearch:

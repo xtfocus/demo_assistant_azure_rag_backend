@@ -6,20 +6,6 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 
-class CustomSkillException(Exception):
-    def __init__(self, message: str, status_code: int = 500):
-        self.message = message
-        self.status_code = status_code
-        logger.error(
-            f"CustomSkillException raised: {self.message}"
-        )  # Log exception on creation
-        super().__init__(self.message)
-
-
-class RequestData(BaseModel):
-    values: List[Dict]
-
-
 class PageRange(BaseModel):
     """Represents the page range information for a document chunk"""
 
@@ -80,3 +66,43 @@ class AzureSearchDoc(BaseModel):
             upload=file_metadata.uploader,
             upload_time=file_metadata.upload_time,
         )
+
+
+class CustomSkillException(Exception):
+    def __init__(self, message: str, status_code: int = 500):
+        self.message = message
+        self.status_code = status_code
+        logger.error(
+            f"CustomSkillException raised: {self.message}"
+        )  # Log exception on creation
+        super().__init__(self.message)
+
+
+class RequestData(BaseModel):
+    values: List[Dict]
+
+
+class FileText(BaseModel):
+    """
+    Represents a page of text
+    """
+
+    page_no: int
+    text: Optional[str]
+
+
+class FileImage(BaseModel):
+    """
+    Represent an image
+    """
+
+    page_no: int
+    image_no: int
+    image_base64: str
+
+
+class MyFile(BaseModel):
+    file_name: str
+    file_content: bytes
+    uploader: str = "default"
+    upload_time: datetime = Field(default_factory=datetime.now)
