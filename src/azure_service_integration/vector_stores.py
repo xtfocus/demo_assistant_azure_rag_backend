@@ -1,5 +1,6 @@
 import json
-from typing import List
+from collections.abc import Callable
+from typing import List, Tuple
 
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -14,12 +15,16 @@ from src.models import BaseChunk, FileMetadata
 
 
 class MyAzureSearch:
+    """
+    Represent an Azure AI Search Index
+    """
+
     def __init__(
         self,
         azure_search_endpoint: str,
         azure_search_key: str,
         index_name: str,
-        embedding_function,
+        embedding_function: Callable,
         fields: List,
         vector_search: VectorSearch,
         semantic_search: SemanticSearch,
@@ -46,7 +51,7 @@ class MyAzureSearch:
         # Ensure the index exists or create it if not
         self._create_index_if_not_exists()
 
-    def _create_index_if_not_exists(self):
+    def _create_index_if_not_exists(self) -> None:
         """Creates the index if it does not already exist."""
         try:
             # Check if the index exists
@@ -63,12 +68,14 @@ class MyAzureSearch:
             self.index_client.create_index(index)
             logger.info(f"Index '{self.index_name}' has been created.")
 
-    async def upload_documents(self, documents):
+    async def upload_documents(self, documents) -> None:
         """Uploads documents to the Azure Search index."""
         self.search_client.upload_documents(documents=documents)
 
     @staticmethod
-    def filtered_texts_and_metadatas_by_min_length(texts, metadatas, min_len=10):
+    def filtered_texts_and_metadatas_by_min_length(
+        texts, metadatas, min_len=10
+    ) -> Tuple:
 
         # Filter texts and metadatas where text length is >= 10
         filtered_batch = [

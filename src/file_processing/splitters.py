@@ -8,7 +8,7 @@ where position information must be preserved
 from abc import ABC, abstractmethod
 from typing import Callable, List, Optional
 
-from .models import BaseChunk, PageRange
+from src.models import BaseChunk, PageRange
 
 
 class BaseTextSplitter(ABC):

@@ -1,4 +1,7 @@
-from dataclasses import field
+"""
+File: fields.py
+Define data schema for Azure AI Search Document
+"""
 
 from azure.search.documents.indexes.models import (SearchableField,
                                                    SearchField,

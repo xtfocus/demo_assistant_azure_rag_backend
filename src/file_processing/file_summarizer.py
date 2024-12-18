@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 
 from openai import AsyncAzureOpenAI
 
-from src.pdf_parsing import FileImage
+from src.file_processing.pdf_parsing import FileImage
 
 
 class FileSummarizer:

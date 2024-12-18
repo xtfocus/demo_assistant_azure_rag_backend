@@ -7,11 +7,9 @@ from typing import List
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from loguru import logger
 
-from src import pipeline
-from src.delete_helpers import process_deletion_across_indices
+from src.configuration.globals import clients, objects
+from src.helpers.delete_helpers import process_deletion_across_indices
 from src.pipeline import MyFile, ProcessingResult
-
-from .globals import clients, objects
 
 router = APIRouter()
 

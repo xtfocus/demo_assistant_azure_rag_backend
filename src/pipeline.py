@@ -5,15 +5,16 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from src.azure_container_client import AzureContainerClient
-from src.file_summarizer import FileSummarizer
-from src.file_utils import (create_file_metadata_from_bytes,
-                            pdf_blob_to_pymupdf_doc)
-from src.image_descriptor import ImageDescriptor
+from src.azure_service_integration.azure_container_client import \
+    AzureContainerClient
+from src.azure_service_integration.vector_stores import MyAzureSearch
+from src.file_processing.file_summarizer import FileSummarizer
+from src.file_processing.file_utils import (create_file_metadata_from_bytes,
+                                            pdf_blob_to_pymupdf_doc)
+from src.file_processing.image_descriptor import ImageDescriptor
+from src.file_processing.pdf_parsing import FileImage, extract_texts_and_images
+from src.file_processing.splitters import SimplePageTextSplitter
 from src.models import BaseChunk, PageRange
-from src.pdf_parsing import FileImage, extract_texts_and_images
-from src.splitters import SimplePageTextSplitter
-from src.vector_stores import MyAzureSearch
 
 
 class MyFile(BaseModel):

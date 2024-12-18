@@ -2,9 +2,11 @@
 Create (or get existing) text and image Azure search indexes
 """
 
+from src.azure_service_integration.search_objects import (get_semantic_search,
+                                                          get_vector_search)
+from src.azure_service_integration.vector_stores import (
+    MyAzureOpenAIEmbeddings, MyAzureSearch)
 from src.fields import get_fields
-from src.search_objects import get_semantic_search, get_vector_search
-from src.vector_stores import MyAzureOpenAIEmbeddings, MyAzureSearch
 
 
 def get_vector_stores(config):

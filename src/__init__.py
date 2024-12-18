@@ -11,17 +11,17 @@ from environs import Env
 from fastapi.middleware.cors import CORSMiddleware
 from openai import AsyncAzureOpenAI
 
-from src.azure_container_client import AzureContainerClient
-from src.check_duplicates import DuplicateChecker
+from src.azure_service_integration.azure_container_client import \
+    AzureContainerClient
+from src.configuration.globals import clients, configs, objects
 from src.get_pipeline import get_pipeline
-
-from .globals import clients, configs, objects
+from src.helpers.check_duplicates import DuplicateChecker
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: fastapi.FastAPI):
 
-    from .config import GlobalAppConfig
+    from src.configuration.config import GlobalAppConfig
 
     configs["app_config"] = GlobalAppConfig()
 

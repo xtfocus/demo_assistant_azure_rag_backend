@@ -10,7 +10,8 @@ from typing import Any, Dict, List
 from azure.storage.blob import BlobServiceClient
 from loguru import logger
 
-from src.azure_container_client import BaseAzureContainerClient
+from src.azure_service_integration.azure_container_client import \
+    BaseAzureContainerClient
 
 
 class DuplicateChecker(BaseAzureContainerClient):

@@ -4,7 +4,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from loguru import logger
 from pydantic import BaseModel, Field
-from pydantic_core.core_schema import datetime_schema
 
 
 class CustomSkillException(Exception):

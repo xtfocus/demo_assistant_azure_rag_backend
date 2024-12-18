@@ -1,12 +1,13 @@
 from openai import AsyncAzureOpenAI
 
-from src.azure_container_client import AzureContainerClient
-from src.file_summarizer import FileSummarizer
+from src.azure_service_integration.azure_container_client import \
+    AzureContainerClient
+from src.azure_service_integration.vector_stores import MyAzureOpenAIEmbeddings
+from src.file_processing.file_summarizer import FileSummarizer
+from src.file_processing.image_descriptor import ImageDescriptor
+from src.file_processing.splitters import SimplePageTextSplitter
 from src.get_vector_stores import get_vector_stores
-from src.image_descriptor import ImageDescriptor
 from src.pipeline import Pipeline
-from src.splitters import SimplePageTextSplitter
-from src.vector_stores import MyAzureOpenAIEmbeddings
 
 
 def get_pipeline(

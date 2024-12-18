@@ -11,7 +11,8 @@ from fitz import Document, Matrix, Page
 from loguru import logger
 from pydantic import BaseModel
 
-from src.file_utils import get_images_as_base64, page_extract_images
+from src.file_processing.file_utils import (get_images_as_base64,
+                                            page_extract_images)
 
 
 class FileText(BaseModel):
